@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  flask_api:
+    build: ./flask_api
+    container_name: flask_api
+    ports:
+      - "5000:5000"
+    networks:
+      - telematics_net
+
+  streamlit_app:
+    build: ./streamlit_app
+    container_name: streamlit_app
+    ports:
+      - "8501:8501"
+    depends_on:
+      - flask_api
+    networks:
+      - telematics_net
+    environment:
+      - API_URL=http://flask_api:5000
+
+networks:
+  telematics_net:
+    driver: bridge
