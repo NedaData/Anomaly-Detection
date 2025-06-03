@@ -1,4 +1,5 @@
 # Ignore virtual environment
+tel_venv/
 *.pyd
 *.so
 *.dll
