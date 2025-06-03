@@ -1,3 +1,4 @@
+# === FLASK BACKEND (app.py) ===
 from flask import Flask, request, jsonify
 import pandas as pd
 import numpy as np
@@ -39,7 +40,7 @@ def analyze_and_return_anomalies(vin):
         return jsonify({"message": "No data found for this VIN."}), 404
 
     features = ['latitude', 'longitude', 'hour', 'day_of_week', 'dist_m', 'truck_type_code']
-    model = IsolationForest(contamination=0.05, random_state=42)
+    model = IsolationForest(contamination=0.015, random_state=42)
     df['is_anomaly'] = model.fit_predict(df[features])
     df['is_anomaly'] = (df['is_anomaly'] == -1).astype(int)
 
@@ -48,4 +49,4 @@ def analyze_and_return_anomalies(vin):
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, host='0.0.0.0', port=5000)
