@@ -40,7 +40,7 @@ if not st.session_state.uploaded:
 try:
     truck_list = requests.get(f"{API_URL}/trucks").json()
 except:
-    st.error("Could not connect to Flask API.")
+    st.error("Please input data first.")
     st.stop()
 
 if not truck_list:
