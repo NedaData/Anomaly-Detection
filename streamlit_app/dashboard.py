@@ -1,104 +1,73 @@
 import streamlit as st
 import pandas as pd
 import requests
-import folium
-from streamlit_folium import st_folium
+import pydeck as pdk
 
-#API_URL = "http://127.0.0.1:5000"
-import os
-API_URL = os.getenv("API_URL", "http://127.0.0.1:5000")
-st.set_page_config(layout="wide", page_title="Telematics Dashboard")
-st.title("📊 Truck Telematics Analyzer")
+API_URL = "http://127.0.0.1:5000"
 
-# === Session State Defaults ===
-if "uploaded" not in st.session_state:
-    st.session_state.uploaded = False
-if "df_result" not in st.session_state:
-    st.session_state.df_result = None
+# Step 1: Get available trucks
+vin_list = requests.get(f"{API_URL}/trucks").json()
+selected_vin = st.selectbox("Select Truck VIN", vin_list)
 
-# === Manual Reset Button ===
-if st.button("Reset Session"):
-    st.session_state.uploaded = False
-    st.session_state.df_result = None
-    st.rerun()
+# Optional: Date-time range input
+st.markdown("### Optional Time Filter")
+start_time = st.text_input("Start Time (YYYY-MM-DDTHH:MM:SS)", "2024-01-01T08:00:00")
+end_time = st.text_input("End Time (YYYY-MM-DDTHH:MM:SS)", "2024-01-01T10:00:00")
 
-# === File Upload ===
-if not st.session_state.uploaded:
-    uploaded_file = st.file_uploader("Upload Telematics CSV", type="csv")
-    if uploaded_file:
-        try:
-            res = requests.post(f"{API_URL}/upload", files={"file": uploaded_file})
-            rows_uploaded = res.json().get("rows", 0)
-            st.success(f"Upload successful: {rows_uploaded} rows")
-            st.session_state.uploaded = True
-            st.rerun() 
-        except Exception as e:
-            st.error(f"Upload failed: {e}")
-            st.stop()
+# Step 2: Analyze + Display
+if st.button("🔍 Run Anomaly Analysis + Show Data"):
+    # 1. Trigger analysis and fetch anomalies directly
+    anom_resp = requests.post(f"{API_URL}/analyze/{selected_vin}/anomalies")
+    if anom_resp.status_code != 200:
+        st.error("Anomaly analysis failed.")
+        df_anom = pd.DataFrame()
+    else:
+        df_anom = pd.DataFrame(anom_resp.json())
+        st.success(f"Anomaly analysis complete. {len(df_anom)} anomalies detected.")
 
-# === Get Truck List ===
-try:
-    truck_list = requests.get(f"{API_URL}/trucks").json()
-except:
-    st.error("Please input data first.")
-    st.stop()
+    if not df_anom.empty:
+        # Apply client-side time filtering
+        df_anom['timestamp'] = pd.to_datetime(df_anom['timestamp'])
+        df_anom = df_anom[
+            (df_anom['timestamp'] >= pd.to_datetime(start_time)) &
+            (df_anom['timestamp'] <= pd.to_datetime(end_time))
+        ]
 
-if not truck_list:
-    st.warning("No trucks found in uploaded data.")
-    st.stop()
+        st.subheader(f"📊 {len(df_anom)} Anomalies in Time Range")
+        st.dataframe(df_anom)
 
-# === VIN & Filter Inputs ===
-selected_vin = st.selectbox("Select Truck VIN", truck_list)
-col1, col2 = st.columns(2)
-with col1:
-    start_time = st.text_input("Start Time (e.g. 2024-01-01T08:00:00)", "")
-with col2:
-    end_time = st.text_input("End Time (e.g. 2024-01-01T10:00:00)", "")
-anomalies_only = st.checkbox("Show only anomalies", value=False)
+        # Filter anomalies with valid GPS
+        # Filter anomalies with valid GPS
+    df_map = df_anom[['latitude', 'longitude']].dropna()
+    lat_center = (df_map['latitude'].min() + df_map['latitude'].max()) / 2
+    lon_center = (df_map['longitude'].min() + df_map['longitude'].max()) / 2
+
+    if not df_map.empty:
+        st.subheader("📍 Anomaly Map")
+
+        st.pydeck_chart(pdk.Deck(
+            initial_view_state=pdk.ViewState(
+                latitude=lat_center,   # Neutral value or fallback
+                longitude=lon_center,
+                zoom=1,       # Zoomed out to show all points
+                pitch=0,
+            ),
+            layers=[
+                pdk.Layer(
+                    'ScatterplotLayer',
+                    data=df_map,
+                    get_position='[longitude, latitude]',
+                    get_color='[255, 0, 0, 160]',
+                    get_radius=100,
+                    pickable=True,
+                )
+            ],
+        ))
 
 
-# === Analyze Button ===
-if st.button("Analyze Route"):
-    try:
-        # Trigger backend anomaly detection
-        requests.post(f"{API_URL}/analyze", json={"vin": selected_vin, "start": start_time, "end": end_time})
-    except:
-        st.warning(" Could not trigger analysis. It might have already run.")
+        # Download option
+        st.download_button("📥 Download Anomalies CSV", df_anom.to_csv(index=False), "anomalies.csv")
 
-    try:
-        # Get filtered results
-        params = {"vin": selected_vin, "start": start_time, "end": end_time}
-        if anomalies_only:
-            params["anomaly_type"] = "iforest"
+    else:
+        st.warning("No anomalies found for this VIN or time range.")
 
-        response = requests.get(f"{API_URL}/data", params=params)
-        df = pd.DataFrame(response.json())
-
-        if df.empty:
-            st.warning("No data found for this filter.")
-        else:
-            st.success(f"Retrieved {len(df)} records.")
-            st.session_state.df_result = df  # Store in session state
-    except Exception as e:
-        st.error(f"Error retrieving data: {e}")
-
-# === Display Saved Results ===
-if st.session_state.df_result is not None:
-    df = st.session_state.df_result
-
-    st.dataframe(df)
-
-    st.subheader("Route Map")
-    m = folium.Map(location=[df["latitude"].mean(), df["longitude"].mean()], zoom_start=12)
-    for _, row in df.iterrows():
-        color = "red" if row.get("iforest_anomaly", 0) == 1 else "blue"
-        folium.CircleMarker(
-            location=[row["latitude"], row["longitude"]],
-            radius=4,
-            color=color,
-            fill=True,
-            fill_opacity=0.7
-        ).add_to(m)
-    st_folium(m, height=500)
-
-    st.download_button("Download Data", df.to_csv(index=False), file_name=f"{selected_vin}_data.csv")
