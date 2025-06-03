@@ -1,3 +1,7 @@
 # Ignore virtual environment
-
-tel_venv/
+*.pyd
+*.so
+*.dll
+*.h5
+__pycache__/
+*.pb
